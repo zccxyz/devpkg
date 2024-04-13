@@ -19,12 +19,16 @@ type Validator[T migrator.Entity] struct {
 	base          *gorm.DB
 	target        *gorm.DB
 	l             logger.Logger
-	producer      *events.SaramaProducer
+	producer      events.Producer
 	direction     string
 	batchSize     int
 	uTime         int64
 	sleepInterval time.Duration
 	queryBase     func(ctx context.Context, offset int) (T, error)
+}
+
+func NewValidator[T migrator.Entity](base *gorm.DB, target *gorm.DB, l logger.Logger, producer events.Producer, direction string, batchSize int) *Validator[T] {
+	return &Validator[T]{base: base, target: target, l: l, producer: producer, direction: direction, batchSize: batchSize}
 }
 
 func (v *Validator[T]) Validate(ctx context.Context) error {
@@ -42,6 +46,10 @@ func (v *Validator[T]) validateBaseToTarget(ctx context.Context) error {
 	offset := 0
 	for {
 		src, err := v.queryBase(ctx, offset)
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			v.l.Debug("base -> target 取消")
+			return err
+		}
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			if v.sleepInterval <= 0 {
 				return nil
@@ -58,6 +66,9 @@ func (v *Validator[T]) validateBaseToTarget(ctx context.Context) error {
 		var dst T
 		err = v.target.WithContext(ctx).Where("id = ?", src.ID()).Offset(offset).First(&dst).Error
 		switch {
+		case errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled):
+			v.l.Debug("base -> target 取消")
+			return err
 		case errors.Is(err, gorm.ErrRecordNotFound):
 			v.notify(ctx, src.ID(), events.InconsistentTargetMissing)
 		case err == nil:
@@ -75,7 +86,11 @@ func (v *Validator[T]) validateTargetToBase(ctx context.Context) error {
 	offset := 0
 	for {
 		var dsts []T
-		err := v.target.WithContext(ctx).Select("id").Order("id").Offset(offset).Find(&dsts).Error
+		err := v.target.WithContext(ctx).Select("id").Order("id").Limit(v.batchSize).Offset(offset).Find(&dsts).Error
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			v.l.Debug("target -> base 取消")
+			return err
+		}
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			if v.sleepInterval <= 0 {
 				return nil
@@ -95,6 +110,9 @@ func (v *Validator[T]) validateTargetToBase(ctx context.Context) error {
 		var srcs []T
 		err = v.base.WithContext(ctx).Where("id IN ?", ids).Find(&srcs).Error
 		switch {
+		case errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled):
+			v.l.Debug("target -> base 取消")
+			return err
 		case errors.Is(err, gorm.ErrRecordNotFound):
 			v.notifyBatch(ctx, ids, events.InconsistentBaseMissing)
 		case err == nil:
@@ -120,21 +138,33 @@ func (v *Validator[T]) validateTargetToBase(ctx context.Context) error {
 	}
 }
 
-// Full 全量
-func (v *Validator[T]) Full() {
-	v.queryBase = v.fullQuery
+func (v *Validator[T]) SetUTime(val int64) *Validator[T] {
+	v.uTime = val
+	return v
 }
 
-// Incr 增量
-func (v *Validator[T]) Incr() {
+func (v *Validator[T]) SetSleepInterval(val time.Duration) *Validator[T] {
+	v.sleepInterval = val
+	return v
+}
+
+// SetFull 全量
+func (v *Validator[T]) SetFull() *Validator[T] {
+	v.queryBase = v.fullQuery
+	return v
+}
+
+// SetIncr 增量
+func (v *Validator[T]) SetIncr() *Validator[T] {
 	v.queryBase = v.IncrQuery
+	return v
 }
 
 func (v *Validator[T]) fullQuery(ctx context.Context, offset int) (T, error) {
-	var src T
-	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	dbCtx, cancel := context.WithTimeout(ctx, time.Second*10)
 	defer cancel()
-	err := v.base.WithContext(ctx).Order("id").Offset(offset).First(&src).Error
+	var src T
+	err := v.base.WithContext(dbCtx).Order("id").Offset(offset).First(&src).Error
 	return src, err
 }
 
@@ -142,7 +172,7 @@ func (v *Validator[T]) IncrQuery(ctx context.Context, offset int) (T, error) {
 	var src T
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	err := v.base.WithContext(ctx).Where("u_time >= ?", v.uTime).Order("u_time").Offset(offset).First(&src).Error
+	err := v.base.WithContext(ctx).Where("utime >= ?", v.uTime).Order("utime").Offset(offset).First(&src).Error
 	return src, err
 }
 

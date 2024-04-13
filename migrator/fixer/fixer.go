@@ -14,6 +14,18 @@ type Fixer[T migrator.Entity] struct {
 	columns []string
 }
 
+func NewFixer[T migrator.Entity](base *gorm.DB, target *gorm.DB) (*Fixer[T], error) {
+	rows, err := base.Model(new(T)).Rows()
+	if err != nil {
+		return nil, err
+	}
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+	return &Fixer[T]{base: base, target: target, columns: columns}, nil
+}
+
 func (f *Fixer[T]) Fix(ctx context.Context, id int64) error {
 	var t T
 	err := f.base.WithContext(ctx).Where("id = ?", id).First(&t).Error

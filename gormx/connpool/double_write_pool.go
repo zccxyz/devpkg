@@ -10,10 +10,10 @@ import (
 )
 
 const (
-	patternSrcOnly  = "src_only"
-	patternSrcFirst = "src_first"
-	patternDstOnly  = "dst_only"
-	patternDstFirst = "dst_first"
+	PatternSrcOnly  = "src_only"
+	PatternSrcFirst = "src_first"
+	PatternDstOnly  = "dst_only"
+	PatternDstFirst = "dst_first"
 )
 
 var errUnknownPattern = errors.New("unknown pattern")
@@ -27,10 +27,10 @@ type DoubleWritePool struct {
 
 func (d *DoubleWritePool) BeginTx(ctx context.Context, opts *sql.TxOptions) (gorm.ConnPool, error) {
 	switch d.pattern.Load() {
-	case patternSrcOnly:
+	case PatternSrcOnly:
 		src, err := d.src.(gorm.TxBeginner).BeginTx(ctx, opts)
-		return &DoubleWritePoolTx{src: src, pattern: patternSrcOnly, l: d.l}, err
-	case patternSrcFirst:
+		return &DoubleWritePoolTx{src: src, pattern: PatternSrcOnly, l: d.l}, err
+	case PatternSrcFirst:
 		src, err := d.src.(gorm.TxBeginner).BeginTx(ctx, opts)
 		if err != nil {
 			return nil, err
@@ -39,8 +39,8 @@ func (d *DoubleWritePool) BeginTx(ctx context.Context, opts *sql.TxOptions) (gor
 		if er != nil {
 			d.l.Error("目标库开启事务失败", logger.Error(er))
 		}
-		return &DoubleWritePoolTx{src: src, pattern: patternSrcFirst, dst: dst, l: d.l}, err
-	case patternDstFirst:
+		return &DoubleWritePoolTx{src: src, pattern: PatternSrcFirst, dst: dst, l: d.l}, err
+	case PatternDstFirst:
 		dst, err := d.dst.(gorm.TxBeginner).BeginTx(ctx, opts)
 		if err != nil {
 			return nil, err
@@ -49,22 +49,22 @@ func (d *DoubleWritePool) BeginTx(ctx context.Context, opts *sql.TxOptions) (gor
 		if er != nil {
 			d.l.Error("源库开启事务失败", logger.Error(er))
 		}
-		return &DoubleWritePoolTx{src: src, pattern: patternDstFirst, dst: dst, l: d.l}, err
-	case patternDstOnly:
+		return &DoubleWritePoolTx{src: src, pattern: PatternDstFirst, dst: dst, l: d.l}, err
+	case PatternDstOnly:
 		dst, err := d.dst.(gorm.TxBeginner).BeginTx(ctx, opts)
-		return &DoubleWritePoolTx{dst: dst, pattern: patternDstOnly, l: d.l}, err
+		return &DoubleWritePoolTx{dst: dst, pattern: PatternDstOnly, l: d.l}, err
 	default:
 		return nil, errUnknownPattern
 	}
 }
 
 func NewDoubleWritePool(src *gorm.DB, dst *gorm.DB, l logger.Logger) *DoubleWritePool {
-	return &DoubleWritePool{src: src.ConnPool, dst: dst.ConnPool, l: l, pattern: atomic.NewString(patternSrcOnly)}
+	return &DoubleWritePool{src: src.ConnPool, dst: dst.ConnPool, l: l, pattern: atomic.NewString(PatternSrcOnly)}
 }
 
 func (d *DoubleWritePool) UpdatePattern(val string) error {
 	switch val {
-	case patternSrcOnly, patternSrcFirst, patternDstOnly, patternDstFirst:
+	case PatternSrcOnly, PatternSrcFirst, PatternDstOnly, PatternDstFirst:
 		d.pattern.Store(val)
 		return nil
 	default:
@@ -78,9 +78,9 @@ func (d *DoubleWritePool) PrepareContext(ctx context.Context, query string) (*sq
 
 func (d *DoubleWritePool) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
 	switch d.pattern.Load() {
-	case patternSrcOnly:
+	case PatternSrcOnly:
 		return d.src.ExecContext(ctx, query, args...)
-	case patternSrcFirst:
+	case PatternSrcFirst:
 		result, err := d.src.ExecContext(ctx, query, args...)
 		if err == nil {
 			_, er := d.dst.ExecContext(ctx, query, args...)
@@ -89,7 +89,7 @@ func (d *DoubleWritePool) ExecContext(ctx context.Context, query string, args ..
 			}
 		}
 		return result, err
-	case patternDstFirst:
+	case PatternDstFirst:
 		result, err := d.dst.ExecContext(ctx, query, args...)
 		if err == nil {
 			_, er := d.src.ExecContext(ctx, query, args...)
@@ -98,7 +98,7 @@ func (d *DoubleWritePool) ExecContext(ctx context.Context, query string, args ..
 			}
 		}
 		return result, err
-	case patternDstOnly:
+	case PatternDstOnly:
 		return d.dst.ExecContext(ctx, query, args...)
 	default:
 		return nil, errUnknownPattern
@@ -107,9 +107,9 @@ func (d *DoubleWritePool) ExecContext(ctx context.Context, query string, args ..
 
 func (d *DoubleWritePool) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
 	switch d.pattern.Load() {
-	case patternSrcFirst, patternSrcOnly:
+	case PatternSrcFirst, PatternSrcOnly:
 		return d.src.QueryContext(ctx, query, args...)
-	case patternDstOnly, patternDstFirst:
+	case PatternDstOnly, PatternDstFirst:
 		return d.dst.QueryContext(ctx, query, args...)
 	default:
 		return nil, errUnknownPattern
@@ -118,9 +118,9 @@ func (d *DoubleWritePool) QueryContext(ctx context.Context, query string, args .
 
 func (d *DoubleWritePool) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
 	switch d.pattern.Load() {
-	case patternSrcFirst, patternSrcOnly:
+	case PatternSrcFirst, PatternSrcOnly:
 		return d.src.QueryRowContext(ctx, query, args...)
-	case patternDstOnly, patternDstFirst:
+	case PatternDstOnly, PatternDstFirst:
 		return d.dst.QueryRowContext(ctx, query, args...)
 	default:
 		panic(errUnknownPattern)
@@ -136,9 +136,9 @@ type DoubleWritePoolTx struct {
 
 func (d *DoubleWritePoolTx) Commit() error {
 	switch d.pattern {
-	case patternSrcOnly:
+	case PatternSrcOnly:
 		return d.src.Commit()
-	case patternSrcFirst:
+	case PatternSrcFirst:
 		err := d.src.Commit()
 		if err == nil && d.dst != nil {
 			er := d.dst.Commit()
@@ -147,7 +147,7 @@ func (d *DoubleWritePoolTx) Commit() error {
 			}
 		}
 		return err
-	case patternDstFirst:
+	case PatternDstFirst:
 		err := d.dst.Commit()
 		if err == nil && d.src != nil {
 			er := d.src.Commit()
@@ -156,7 +156,7 @@ func (d *DoubleWritePoolTx) Commit() error {
 			}
 		}
 		return err
-	case patternDstOnly:
+	case PatternDstOnly:
 		return d.dst.Commit()
 	default:
 		return errUnknownPattern
@@ -165,9 +165,9 @@ func (d *DoubleWritePoolTx) Commit() error {
 
 func (d *DoubleWritePoolTx) Rollback() error {
 	switch d.pattern {
-	case patternSrcOnly:
+	case PatternSrcOnly:
 		return d.src.Rollback()
-	case patternSrcFirst:
+	case PatternSrcFirst:
 		err := d.src.Rollback()
 		if err == nil && d.dst != nil {
 			er := d.dst.Rollback()
@@ -176,7 +176,7 @@ func (d *DoubleWritePoolTx) Rollback() error {
 			}
 		}
 		return err
-	case patternDstFirst:
+	case PatternDstFirst:
 		err := d.dst.Rollback()
 		if err == nil && d.src != nil {
 			er := d.src.Rollback()
@@ -185,7 +185,7 @@ func (d *DoubleWritePoolTx) Rollback() error {
 			}
 		}
 		return err
-	case patternDstOnly:
+	case PatternDstOnly:
 		return d.dst.Rollback()
 	default:
 		return errUnknownPattern
@@ -198,9 +198,9 @@ func (d *DoubleWritePoolTx) PrepareContext(ctx context.Context, query string) (*
 
 func (d *DoubleWritePoolTx) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
 	switch d.pattern {
-	case patternSrcOnly:
+	case PatternSrcOnly:
 		return d.src.ExecContext(ctx, query, args...)
-	case patternSrcFirst:
+	case PatternSrcFirst:
 		result, err := d.src.ExecContext(ctx, query, args...)
 		if err == nil && d.dst != nil {
 			_, er := d.dst.ExecContext(ctx, query, args...)
@@ -209,7 +209,7 @@ func (d *DoubleWritePoolTx) ExecContext(ctx context.Context, query string, args 
 			}
 		}
 		return result, err
-	case patternDstFirst:
+	case PatternDstFirst:
 		result, err := d.dst.ExecContext(ctx, query, args...)
 		if err == nil && d.src != nil {
 			_, er := d.src.ExecContext(ctx, query, args...)
@@ -218,7 +218,7 @@ func (d *DoubleWritePoolTx) ExecContext(ctx context.Context, query string, args 
 			}
 		}
 		return result, err
-	case patternDstOnly:
+	case PatternDstOnly:
 		return d.dst.ExecContext(ctx, query, args...)
 	default:
 		return nil, errUnknownPattern
@@ -227,9 +227,9 @@ func (d *DoubleWritePoolTx) ExecContext(ctx context.Context, query string, args 
 
 func (d *DoubleWritePoolTx) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
 	switch d.pattern {
-	case patternSrcFirst, patternSrcOnly:
+	case PatternSrcFirst, PatternSrcOnly:
 		return d.src.QueryContext(ctx, query, args...)
-	case patternDstOnly, patternDstFirst:
+	case PatternDstOnly, PatternDstFirst:
 		return d.dst.QueryContext(ctx, query, args...)
 	default:
 		return nil, errUnknownPattern
@@ -238,9 +238,9 @@ func (d *DoubleWritePoolTx) QueryContext(ctx context.Context, query string, args
 
 func (d *DoubleWritePoolTx) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
 	switch d.pattern {
-	case patternSrcFirst, patternSrcOnly:
+	case PatternSrcFirst, PatternSrcOnly:
 		return d.src.QueryRowContext(ctx, query, args...)
-	case patternDstOnly, patternDstFirst:
+	case PatternDstOnly, PatternDstFirst:
 		return d.dst.QueryRowContext(ctx, query, args...)
 	default:
 		panic(errUnknownPattern)

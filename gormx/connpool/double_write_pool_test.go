@@ -28,7 +28,7 @@ func (d *DoubleWritePoolTestSuite) SetupSuite() {
 	require.NoError(d.T(), err)
 
 	pool := NewDoubleWritePool(src, dst, logger.NewNoLogger())
-	err = pool.UpdatePattern(patternSrcFirst)
+	err = pool.UpdatePattern(PatternSrcFirst)
 	require.NoError(d.T(), err)
 	db, err := gorm.Open(mysql.New(
 
